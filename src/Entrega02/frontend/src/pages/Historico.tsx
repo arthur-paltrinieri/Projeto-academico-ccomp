@@ -10,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import * as XLSX from "xlsx";
 
 interface SessionData {
   id: string;
@@ -27,7 +28,17 @@ const Historico = () => {
     const fetchHistorico = async () => {
       try {
         const response = await api.get("/api/historico");
-        setSessions(response.data);
+
+        const formattedData: SessionData[] = response.data.map((item: any) => ({
+          id: item.id,
+          date: item.date,
+          time: item.time,
+          team: item.team,
+          items: Number(item.items) || 0,
+          totalWeight: Number(item.totalWeight) || 0,
+        }));
+
+        setSessions(formattedData);
       } catch (error) {
         console.error("Erro ao buscar histórico:", error);
       }
@@ -40,6 +51,66 @@ const Historico = () => {
   const pesoGeral = sessions.reduce((s, r) => s + Number(r.totalWeight), 0);
   const mediaItems =
     sessions.length > 0 ? Math.round(totalItems / sessions.length) : 0;
+
+  const exportarRelatorio = () => {
+    if (sessions.length === 0) {
+      alert("Não há dados para exportar.");
+      return;
+    }
+
+    const dadosRelatorio = sessions.map((session) => ({
+      "ID Sessão": session.id,
+      Data: session.date,
+      Hora: session.time,
+      Equipe: session.team,
+      "Itens Processados": session.items,
+      "Peso Total (kg)": Number(session.totalWeight).toFixed(2),
+      Status: "Concluída",
+    }));
+
+    const resumoRelatorio = [
+      {
+        Indicador: "Total de Sessões",
+        Valor: sessions.length,
+      },
+      {
+        Indicador: "Itens Processados",
+        Valor: totalItems,
+      },
+      {
+        Indicador: "Peso Geral Arrecadado (kg)",
+        Valor: Number(pesoGeral).toFixed(2),
+      },
+      {
+        Indicador: "Média de Itens por Sessão",
+        Valor: mediaItems,
+      },
+    ];
+
+    const workbook = XLSX.utils.book_new();
+
+    const worksheetHistorico = XLSX.utils.json_to_sheet(dadosRelatorio);
+    const worksheetResumo = XLSX.utils.json_to_sheet(resumoRelatorio);
+
+    worksheetHistorico["!cols"] = [
+      { wch: 25 },
+      { wch: 14 },
+      { wch: 10 },
+      { wch: 28 },
+      { wch: 18 },
+      { wch: 18 },
+      { wch: 14 },
+    ];
+
+    worksheetResumo["!cols"] = [{ wch: 30 }, { wch: 18 }];
+
+    XLSX.utils.book_append_sheet(workbook, worksheetResumo, "Resumo");
+    XLSX.utils.book_append_sheet(workbook, worksheetHistorico, "Histórico");
+
+    const dataAtual = new Date().toLocaleDateString("pt-BR").replace(/\//g, "-");
+
+    XLSX.writeFile(workbook, `relatorio-liderai-${dataAtual}.xlsx`);
+  };
 
   return (
     <div className="space-y-6">
@@ -54,7 +125,11 @@ const Historico = () => {
           </p>
         </div>
 
-        <Button variant="outline" className="rounded-lg">
+        <Button
+          variant="outline"
+          className="rounded-lg"
+          onClick={exportarRelatorio}
+        >
           <Download className="h-4 w-4 mr-2" />
           Exportar Relatório
         </Button>

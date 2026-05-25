@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Package,
   Utensils,
@@ -20,21 +20,6 @@ import {
 } from "recharts";
 import { api } from "@/lib/api";
 
-const chartData = [
-  { month: "Jan", items: 150 },
-  { month: "Fev", items: 165 },
-  { month: "Mar", items: 180 },
-  { month: "Abr", items: 250 },
-  { month: "Mai", items: 280 },
-  { month: "Jun", items: 270 },
-  { month: "Jul", items: 290 },
-  { month: "Ago", items: 350 },
-  { month: "Set", items: 380 },
-  { month: "Out", items: 420 },
-  { month: "Nov", items: 460 },
-  { month: "Dez", items: 500 },
-];
-
 interface SessionData {
   id: string;
   date: string;
@@ -44,10 +29,64 @@ interface SessionData {
   totalWeight: number;
 }
 
+interface ChartData {
+  month: string;
+  items: number;
+  weight: number;
+}
+
+const monthNames = [
+  "Jan",
+  "Fev",
+  "Mar",
+  "Abr",
+  "Mai",
+  "Jun",
+  "Jul",
+  "Ago",
+  "Set",
+  "Out",
+  "Nov",
+  "Dez",
+];
+
+const parseBrazilianDate = (date: string) => {
+  const [day, month, year] = date.split("/").map(Number);
+
+  return {
+    day,
+    month,
+    year,
+    monthIndex: month - 1,
+  };
+};
+
 const Dashboard = () => {
   const [userName, setUserName] = useState("Carregando...");
   const [userRole, setUserRole] = useState("");
   const [recentActivity, setRecentActivity] = useState<SessionData[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchDashboardData = async () => {
+    try {
+      const response = await api.get("/api/historico");
+
+      const formattedData: SessionData[] = response.data.map((item: any) => ({
+        id: item.id,
+        date: item.date,
+        time: item.time,
+        team: item.team,
+        items: Number(item.items) || 0,
+        totalWeight: Number(item.totalWeight) || 0,
+      }));
+
+      setRecentActivity(formattedData);
+    } catch (error) {
+      console.error("Erro ao buscar dados do dashboard:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     const savedUser = localStorage.getItem("liderai_user");
@@ -60,17 +99,93 @@ const Dashboard = () => {
       setUserRole(parsedUser.role === "admin" ? "Administrador" : "Aluno");
     }
 
-    const fetchRecentActivity = async () => {
-      try {
-        const response = await api.get("/api/historico");
-        setRecentActivity(response.data.slice(0, 4));
-      } catch (error) {
-        console.error("Erro ao buscar atividades recentes:", error);
-      }
-    };
+    fetchDashboardData();
 
-    fetchRecentActivity();
+    const interval = setInterval(() => {
+      fetchDashboardData();
+    }, 5000);
+
+    return () => clearInterval(interval);
   }, []);
+
+  const totalItems = useMemo(() => {
+    return recentActivity.reduce((total, item) => total + Number(item.items), 0);
+  }, [recentActivity]);
+
+  const totalWeight = useMemo(() => {
+    return recentActivity.reduce(
+      (total, item) => total + Number(item.totalWeight),
+      0
+    );
+  }, [recentActivity]);
+
+  const estimatedMeals = useMemo(() => {
+    return Math.floor(totalWeight / 0.4);
+  }, [totalWeight]);
+
+  const chartData = useMemo(() => {
+    const groupedData: Record<string, ChartData & { sortKey: number }> = {};
+
+    recentActivity.forEach((item) => {
+      if (!item.date) return;
+
+      const { monthIndex, year } = parseBrazilianDate(item.date);
+      const key = `${year}-${monthIndex}`;
+      const label = `${monthNames[monthIndex]}/${String(year).slice(-2)}`;
+
+      if (!groupedData[key]) {
+        groupedData[key] = {
+          month: label,
+          items: 0,
+          weight: 0,
+          sortKey: year * 100 + monthIndex,
+        };
+      }
+
+      groupedData[key].items += Number(item.items) || 0;
+      groupedData[key].weight += Number(item.totalWeight) || 0;
+    });
+
+    return Object.values(groupedData)
+      .sort((a, b) => a.sortKey - b.sortKey)
+      .map(({ sortKey, ...data }) => data);
+  }, [recentActivity]);
+
+  const currentMonthItems = useMemo(() => {
+    const currentDate = new Date();
+    const currentMonth = currentDate.getMonth();
+    const currentYear = currentDate.getFullYear();
+
+    return recentActivity.reduce((total, item) => {
+      if (!item.date) return total;
+
+      const { monthIndex, year } = parseBrazilianDate(item.date);
+
+      if (monthIndex === currentMonth && year === currentYear) {
+        return total + Number(item.items);
+      }
+
+      return total;
+    }, 0);
+  }, [recentActivity]);
+
+  const currentMonthWeight = useMemo(() => {
+    const currentDate = new Date();
+    const currentMonth = currentDate.getMonth();
+    const currentYear = currentDate.getFullYear();
+
+    return recentActivity.reduce((total, item) => {
+      if (!item.date) return total;
+
+      const { monthIndex, year } = parseBrazilianDate(item.date);
+
+      if (monthIndex === currentMonth && year === currentYear) {
+        return total + Number(item.totalWeight);
+      }
+
+      return total;
+    }, 0);
+  }, [recentActivity]);
 
   return (
     <div className="space-y-6">
@@ -91,15 +206,18 @@ const Dashboard = () => {
               <Package className="h-4 w-4 text-primary" />
             </div>
 
-            <p className="text-3xl font-bold text-foreground">2.450</p>
+            <p className="text-3xl font-bold text-foreground">
+              {loading ? "..." : totalItems}
+            </p>
+
             <p className="text-xs text-muted-foreground mt-1">
               itens arrecadados
             </p>
 
             <div className="flex items-center gap-1 mt-2">
-              <TrendingUp className="h-3 w-3 text-primary" />
+              <Weight className="h-3 w-3 text-primary" />
               <span className="text-xs text-primary font-medium">
-                +12% este mês
+                {totalWeight.toFixed(2)} kg no total
               </span>
             </div>
           </CardContent>
@@ -114,15 +232,18 @@ const Dashboard = () => {
               <Utensils className="h-4 w-4 text-primary" />
             </div>
 
-            <p className="text-3xl font-bold text-foreground">128</p>
+            <p className="text-3xl font-bold text-foreground">
+              {loading ? "..." : estimatedMeals}
+            </p>
+
             <p className="text-xs text-muted-foreground mt-1">
-              refeições completas
+              refeições estimadas
             </p>
 
             <div className="flex items-center gap-1 mt-2">
               <TrendingUp className="h-3 w-3 text-primary" />
               <span className="text-xs text-primary font-medium">
-                +8% este mês
+                {currentMonthWeight.toFixed(2)} kg este mês
               </span>
             </div>
           </CardContent>
@@ -152,7 +273,7 @@ const Dashboard = () => {
           <div className="flex items-center gap-2 mb-1">
             <Calendar className="h-4 w-4 text-primary" />
             <span className="text-sm font-semibold text-foreground">
-              Fluxo Mensal de Doações
+              Fluxo Total de Doações
             </span>
           </div>
 
@@ -161,35 +282,65 @@ const Dashboard = () => {
           </p>
 
           <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData}>
-                <defs>
-                  <linearGradient id="greenGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#00ab72" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#00ab72" stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
+            {chartData.length === 0 ? (
+              <div className="h-full flex items-center justify-center">
+                <p className="text-sm text-muted-foreground">
+                  Nenhuma doação registrada para exibir no gráfico.
+                </p>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartData}>
+                  <defs>
+                    <linearGradient
+                      id="greenGradient"
+                      x1="0"
+                      y1="0"
+                      x2="0"
+                      y2="1"
+                    >
+                      <stop offset="5%" stopColor="#00ab72" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#00ab72" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
 
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(150 15% 90%)" />
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="hsl(150 15% 90%)"
+                  />
 
-                <XAxis
-                  dataKey="month"
-                  tick={{ fontSize: 12, fill: "hsl(192 10% 46%)" }}
-                />
+                  <XAxis
+                    dataKey="month"
+                    tick={{ fontSize: 12, fill: "hsl(192 10% 46%)" }}
+                  />
 
-                <YAxis tick={{ fontSize: 12, fill: "hsl(192 10% 46%)" }} />
+                  <YAxis tick={{ fontSize: 12, fill: "hsl(192 10% 46%)" }} />
 
-                <Tooltip />
+                  <Tooltip
+                    formatter={(value, name) => {
+                      if (name === "items") return [`${value} itens`, "Itens"];
+                      if (name === "weight") return [`${value} kg`, "Peso"];
+                      return [value, name];
+                    }}
+                  />
 
-                <Area
-                  type="monotone"
-                  dataKey="items"
-                  stroke="#00ab72"
-                  strokeWidth={2}
-                  fill="url(#greenGradient)"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+                  <Area
+                    type="monotone"
+                    dataKey="items"
+                    stroke="#00ab72"
+                    strokeWidth={2}
+                    fill="url(#greenGradient)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1 mt-3">
+            <TrendingUp className="h-3 w-3 text-primary" />
+            <span className="text-xs text-primary font-medium">
+              {currentMonthItems} itens registrados este mês
+            </span>
           </div>
         </CardContent>
       </Card>
@@ -207,12 +358,12 @@ const Dashboard = () => {
           <div className="space-y-3">
             {recentActivity.length === 0 ? (
               <p className="text-sm text-center text-muted-foreground py-4">
-                Nenhuma atividade registrada hoje.
+                Nenhuma atividade registrada.
               </p>
             ) : (
-              recentActivity.map((item, i) => (
+              recentActivity.slice(0, 4).map((item, i) => (
                 <div
-                  key={i}
+                  key={`${item.id}-${i}`}
                   className="flex items-center justify-between py-2 border-b border-border last:border-0"
                 >
                   <div className="flex items-center gap-3">
